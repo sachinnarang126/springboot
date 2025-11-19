@@ -3,6 +3,7 @@ package com.learning.springboot.controller;
 import com.learning.springboot.exceptions.PasswordMisMatchException;
 import com.learning.springboot.model.*;
 import com.learning.springboot.service.CustomUserDetailsService;
+import com.learning.springboot.service.TokenBlacklistService;
 import com.learning.springboot.security.JwtUtil;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
@@ -29,6 +30,9 @@ public class AuthController {
 
     @Autowired
     private JwtUtil jwtUtil;
+    
+    @Autowired
+    private TokenBlacklistService tokenBlacklistService;
 
     /**
      * POST /api/auth/login
@@ -176,5 +180,35 @@ public class AuthController {
         return ResponseEntity.ok(
                 ApiResponse.success("You're connected")
         );
+    }
+
+    /**
+     * POST /api/auth/logout
+     * Logout user by blacklisting their JWT token
+     */
+    @PostMapping("/logout")
+    public ResponseEntity<ApiResponse<Void>> logout(
+            @RequestHeader("Authorization") String authorizationHeader) {
+        try {
+            // Extract token from Authorization header
+            if (authorizationHeader != null && authorizationHeader.startsWith("Bearer ")) {
+                String token = authorizationHeader.substring(7);
+                
+                // Blacklist the token
+                tokenBlacklistService.blacklistToken(token);
+                
+                return ResponseEntity.ok(
+                        ApiResponse.success("Logged out successfully")
+                );
+            } else {
+                return ResponseEntity
+                        .status(HttpStatus.BAD_REQUEST)
+                        .body(ApiResponse.error("Invalid authorization header", 400));
+            }
+        } catch (Exception e) {
+            return ResponseEntity
+                    .status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(ApiResponse.error("Logout failed: " + e.getMessage(), 500));
+        }
     }
 }

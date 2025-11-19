@@ -1,5 +1,6 @@
 package com.learning.springboot.security;
 
+import com.learning.springboot.service.TokenBlacklistService;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -27,6 +28,9 @@ public class JwtRequestFilter extends OncePerRequestFilter {
 
     @Autowired
     private JwtUtil jwtUtil;
+    
+    @Autowired
+    private TokenBlacklistService tokenBlacklistService;
 
     @Override
     protected void doFilterInternal(HttpServletRequest request,
@@ -52,6 +56,13 @@ public class JwtRequestFilter extends OncePerRequestFilter {
 
         // Validate token and set authentication
         if (username != null && SecurityContextHolder.getContext().getAuthentication() == null) {
+            
+            // Check if token is blacklisted (user logged out)
+            if (tokenBlacklistService.isTokenBlacklisted(jwt)) {
+                logger.warn("Token is blacklisted (user logged out)");
+                chain.doFilter(request, response);
+                return;
+            }
 
             UserDetails userDetails = this.userDetailsService.loadUserByUsername(username);
 
