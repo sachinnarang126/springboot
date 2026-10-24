@@ -2,8 +2,9 @@ package com.learning.springboot.security;
 
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.Jwts;
-import io.jsonwebtoken.SignatureAlgorithm;
+import io.jsonwebtoken.io.Decoders;
 import io.jsonwebtoken.security.Keys;
+import jakarta.annotation.PostConstruct;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.stereotype.Component;
@@ -21,8 +22,28 @@ import java.util.function.Function;
 @Component
 public class JwtUtil {
 
-    // Secret key for signing tokens (in real apps, use environment variable)
-    private final Key SECRET_KEY = Keys.secretKeyFor(SignatureAlgorithm.HS256);
+    private static final int MIN_SECRET_BYTES = 32; // 256 bits, required for HS256
+
+    // Base64-encoded signing secret, supplied via environment (JWT_SECRET). No default on purpose.
+    @Value("${jwt.secret}")
+    private String secret;
+
+    private Key SECRET_KEY;
+
+    @PostConstruct
+    void init() {
+        byte[] keyBytes;
+        try {
+            keyBytes = Decoders.BASE64.decode(secret);
+        } catch (RuntimeException e) {
+            throw new IllegalStateException("jwt.secret must be a valid Base64 string", e);
+        }
+        if (keyBytes.length < MIN_SECRET_BYTES) {
+            throw new IllegalStateException(
+                    "jwt.secret must decode to at least " + MIN_SECRET_BYTES + " bytes (256 bits)");
+        }
+        this.SECRET_KEY = Keys.hmacShaKeyFor(keyBytes);
+    }
 
     // Token expiration: 1 hour
     @Value("${jwt.expiration:3600000}")

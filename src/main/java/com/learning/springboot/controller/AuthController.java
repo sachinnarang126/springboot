@@ -1,5 +1,6 @@
 package com.learning.springboot.controller;
 
+import com.learning.springboot.exceptions.AccountLockException;
 import com.learning.springboot.exceptions.PasswordMisMatchException;
 import com.learning.springboot.model.*;
 import com.learning.springboot.service.CustomUserDetailsService;
@@ -9,7 +10,11 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.authentication.AuthenticationManager;
+import org.springframework.security.authentication.InternalAuthenticationServiceException;
+import org.springframework.security.authentication.LockedException;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.AuthenticationException;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.web.bind.annotation.*;
@@ -68,19 +73,29 @@ public class AuthController {
             return ResponseEntity.ok(
                     ApiResponse.success(authResponse, "Login successful")
             );
-        } catch (Exception e) {
-            if (e.getMessage().equals("locked")) {
-                return ResponseEntity
-                        .status(HttpStatus.UNAUTHORIZED)
-                        .body(ApiResponse.error("Account is locked due to too many failed login attempts. Please try again later.", HttpStatus.UNAUTHORIZED.value()));
-            } else {
-                // Record failed login attempt
-                userDetailsService.recordFailedAttempt(authRequest.getUsername());
-                return ResponseEntity
-                        .status(HttpStatus.UNAUTHORIZED)
-                        .body(ApiResponse.error("Invalid username or password", HttpStatus.UNAUTHORIZED.value()));
+        } catch (LockedException | AccountLockException e) {
+            return accountLockedResponse();
+        } catch (InternalAuthenticationServiceException e) {
+            // Spring wraps exceptions thrown by UserDetailsService in this type
+            if (e.getCause() instanceof AccountLockException) {
+                return accountLockedResponse();
             }
+            return ResponseEntity
+                    .status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(ApiResponse.error("Login failed", HttpStatus.INTERNAL_SERVER_ERROR.value()));
+        } catch (AuthenticationException e) {
+            // Bad credentials or unknown user: record failed attempt, give a generic message
+            userDetailsService.recordFailedAttempt(authRequest.getUsername());
+            return ResponseEntity
+                    .status(HttpStatus.UNAUTHORIZED)
+                    .body(ApiResponse.error("Invalid username or password", HttpStatus.UNAUTHORIZED.value()));
         }
+    }
+
+    private ResponseEntity<ApiResponse<AuthResponse>> accountLockedResponse() {
+        return ResponseEntity
+                .status(HttpStatus.UNAUTHORIZED)
+                .body(ApiResponse.error("Account is locked due to too many failed login attempts. Please try again later.", HttpStatus.UNAUTHORIZED.value()));
     }
 
     /**
@@ -136,7 +151,12 @@ public class AuthController {
     }
 
     @PostMapping("/updatePassword")
-    public ResponseEntity<ApiResponse<Void>> updatePassword(@RequestBody ChangePasswordRequest changePasswordRequest) {
+    public ResponseEntity<ApiResponse<Void>> updatePassword(
+            @RequestBody ChangePasswordRequest changePasswordRequest,
+            Authentication authentication) {
+        // Always use the authenticated user; ignore any username supplied in the body
+        final String username = authentication.getName();
+
         if (changePasswordRequest.getOldPassword() == null || changePasswordRequest.getOldPassword().isEmpty()) {
             return ResponseEntity
                     .status(HttpStatus.BAD_REQUEST)
@@ -154,7 +174,7 @@ public class AuthController {
         }
 
         try {
-            boolean isPasswordUpdated = userDetailsService.updatePassword(changePasswordRequest.getUsername(), changePasswordRequest.getOldPassword(), changePasswordRequest.getNewPassword());
+            boolean isPasswordUpdated = userDetailsService.updatePassword(username, changePasswordRequest.getOldPassword(), changePasswordRequest.getNewPassword());
             if (isPasswordUpdated) return ResponseEntity.ok(
                     ApiResponse.success("Password updated successfully")
             ); else {
@@ -175,8 +195,7 @@ public class AuthController {
 
     @GetMapping("/connected")
     public ResponseEntity<ApiResponse<Void>> validateToken() {
-        // If this endpoint is reached, you're connected
-        // (because of JWT filter)
+        // Public endpoint: reachable without a token, so it only confirms the server is up
         return ResponseEntity.ok(
                 ApiResponse.success("You're connected")
         );
